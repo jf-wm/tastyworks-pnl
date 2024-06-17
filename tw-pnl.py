@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 #
-# Copyright (C) 2020-2022 Florian La Roche <Florian.LaRoche@gmail.com>
+# Copyright (C) 2020-2024 Florian La Roche <Florian.LaRoche@gmail.com>
 # https://github.com/laroche/tastyworks-pnl
 #
 # Generate data for a German tax income statement from Tastyworks trade history.
@@ -20,7 +20,7 @@
 #
 # sudo apt-get install python3-pandas
 #
-# for grphical output (--show) you need at least:
+# for graphical output (--show) you need at least:
 #
 # sudo apt-get install python3-matplotlib
 #
@@ -36,26 +36,30 @@ import math
 import datetime as pydatetime
 import pandas
 
-convert_currency = True
+convert_currency: bool = True
 
 # For an unknown symbol (underlying), assume it is a individual/normal stock.
 # Otherwise you need to adjust the hardcoded list in this script.
-assume_stock = False
+assume_stock: bool = False
 
 eurusd = None
+
+eurusd_url: str = 'https://www.bundesbank.de/statistic-rmi/StatisticDownload?tsId=BBEX3.D.USD.EUR.BB.AC.000&its_csvFormat=en&its_fileFormat=csv&mode=its&its_from=2010'
 
 # Setup 'eurusd' as dict() to contain the EURUSD exchange rate on a given date
 # based on official data from bundesbank.de.
 # If the file 'eurusd.csv' does not exist, download the data from
 # the bundesbank directly.
-def read_eurusd():
+def read_eurusd() -> None:
     import csv
     global eurusd
     url = 'eurusd.csv'
     if not os.path.exists(url):
-        url = 'https://www.bundesbank.de/statistic-rmi/StatisticDownload?tsId=BBEX3.D.USD.EUR.BB.AC.000&its_csvFormat=en&its_fileFormat=csv&mode=its&its_from=2010'
+        url = os.path.join(os.path.dirname(__file__), 'eurusd.csv')
+    if not os.path.exists(url):
+        url = eurusd_url
     eurusd = {}
-    with open(url, 'r', encoding='UTF8') as csv_file:
+    with open(url, encoding='UTF8') as csv_file:
         reader = csv.reader(csv_file)
         for _ in range(5):
             next(reader)
@@ -66,7 +70,7 @@ def read_eurusd():
                 else:
                     eurusd[date] = None
 
-def get_eurusd(date):
+def get_eurusd(date: str) -> float:
     while True:
         try:
             x = eurusd[date]
@@ -78,21 +82,21 @@ def get_eurusd(date):
             return x
         date = str(pydatetime.date(*map(int, date.split('-'))) - pydatetime.timedelta(days=1))
 
-#def eur2usd(x, date, conv=None):
+#def eur2usd(x: float, date: str, conv=None) -> float:
 #    if convert_currency:
 #        if conv is None:
 #            return x * get_eurusd(date)
 #        return x * conv
 #    return x
 
-def usd2eur(x, date, conv=None):
+def usd2eur(x: float, date: str, conv=None) -> float:
     if convert_currency:
         if conv is None:
             return x / get_eurusd(date)
         return x / conv
     return x
 
-def isnan(x):
+def isnan(x) -> bool:
     return str(x) == 'nan'
 
 class AssetType(enum.IntEnum):
@@ -107,25 +111,31 @@ class AssetType(enum.IntEnum):
     Future = 9
     Transfer = 10
     Dividend = 11
-    Interest = 12
-    WithholdingTax = 13
-    OrderPayments = 14
-    Fee = 15
+    DividendAktienFond = 12
+    DividendMischFond = 13
+    DividendImmobilienFond = 14
+    Interest = 15
+    WithholdingTax = 16
+    OrderPayments = 17
+    Fee = 18
 
 def transaction_type(asset_type):
     t = ['', 'Long-Option', 'Stillhalter-Option', 'Aktie', 'Aktienfond', 'Mischfond', 'Immobilienfond',
-        'Sonstiges', 'Krypto', 'Future', 'Ein/Auszahlung', 'Dividende', 'Zinsen',
-        'Quellensteuer', 'Ordergebühr', 'Brokergebühr']
-    if int(asset_type) >= 1 and int(asset_type) <= 15:
+        'Sonstiges', 'Krypto', 'Future', 'Ein/Auszahlung',
+        'Dividende', 'Dividende Aktienfond', 'Dividende Mischfond', 'Dividende Immobilienfond',
+        'Zinsen', 'Quellensteuer', 'Ordergebühr', 'Brokergebühr']
+    if int(asset_type) >= 1 and int(asset_type) <= 18:
         return t[asset_type]
     return ''
 
 transaction_order = {
     'Ein/Auszahlung': 1, 'Brokergebühr': 2, 'Krypto': 3,
     'Aktienfond': 4, 'Mischfond': 5, 'Immobilienfond': 6,
-    'Aktie': 7, 'Dividende': 8, 'Quellensteuer': 9,
-    'Sonstiges': 10, 'Stillhalter-Option': 11,
-    'Long-Option': 12, 'Future': 13, 'Zinsen': 14, 'Ordergebühr': 15,
+    'Aktie': 7, 'Dividende': 8, 'Dividende Aktienfond': 9,
+    'Dividende Mischfond': 10, 'Dividende Immobilienfond': 11,
+    'Quellensteuer': 12,
+    'Sonstiges': 13, 'Stillhalter-Option': 14,
+    'Long-Option': 15, 'Future': 16, 'Zinsen': 17, 'Ordergebühr': 18,
 }
 
 def check_tcode(tcode, tsubcode, description):
@@ -153,11 +163,11 @@ def check_tcode(tcode, tsubcode, description):
             raise ValueError(f'Exercise with description {description}')
 
 def check_param(buysell, openclose, callput):
-    if str(buysell) not in ('nan', 'Buy', 'Sell'):
+    if buysell not in ('', 'Buy', 'Sell'):
         raise ValueError(f'Unknown buysell: {buysell}')
-    if str(openclose) not in ('nan', 'Open', 'Close'):
+    if openclose not in ('', 'Open', 'Close'):
         raise ValueError(f'Unknown openclose: {openclose}')
-    if str(callput) not in ('nan', 'C', 'P'):
+    if callput not in ('', 'C', 'P'):
         raise ValueError(f'Unknown callput: {callput}')
 
 def check_trade(tsubcode, check_amount, amount, asset_type):
@@ -179,85 +189,90 @@ def check_trade(tsubcode, check_amount, amount, asset_type):
             raise
 
 # https://en.wikipedia.org/wiki/List_of_S%26P_500_companies
-SP500 = ('A', 'AAL', 'AAP', 'AAPL', 'ABBV', 'ABC', 'ABMD', 'ABT', 'ACN', 'ADBE',
-    'ADI', 'ADM', 'ADP', 'ADSK', 'AEE', 'AEP', 'AES', 'AFL', 'AIG', 'AIZ',
-    'AJG', 'AKAM', 'ALB', 'ALGN', 'ALK', 'ALL', 'ALLE', 'AMAT', 'AMCR', 'AMD',
-    'AME', 'AMGN', 'AMP', 'AMT', 'AMZN', 'ANET', 'ANSS', 'AON', 'AOS', 'APA',
-    'APD', 'APH', 'APTV', 'ARE', 'ATO', 'ATVI', 'AVB', 'AVGO', 'AVY', 'AWK',
-    'AXP', 'AZO', 'BA', 'BAC', 'BALL', 'BAX', 'BBWI', 'BBY', 'BDX', 'BEN',
-    'BF.B', 'BIIB', 'BIO', 'BK', 'BKNG', 'BKR', 'BLK', 'BMY', 'BR', 'BRK.B',
-    'BRO', 'BSX', 'BWA', 'BXP', 'C', 'CAG', 'CAH', 'CARR', 'CAT', 'CB', 'CBOE',
-    'CBRE', 'CCI', 'CCL', 'CDAY', 'CDNS', 'CDW', 'CE', 'CEG', 'CF', 'CFG',
-    'CHD', 'CHRW', 'CHTR', 'CI', 'CINF', 'CL', 'CLX', 'CMA', 'CMCSA', 'CME',
-    'CMG', 'CMI', 'CMS', 'CNC', 'CNP', 'COF', 'COO', 'COP', 'COST', 'CPB',
-    'CPRT', 'CPT', 'CRL', 'CRM', 'CSCO', 'CSGP', 'CSX', 'CTAS', 'CTLT', 'CTRA',
-    'CTSH', 'CTVA', 'CTXS', 'CVS', 'CVX', 'CZR', 'D', 'DAL', 'DD', 'DE', 'DFS',
-    'DG', 'DGX', 'DHI', 'DHR', 'DIS', 'DISH', 'DLR', 'DLTR', 'DOV', 'DOW',
-    'DPZ', 'DRE', 'DRI', 'DTE', 'DUK', 'DVA', 'DVN', 'DXC', 'DXCM', 'EA',
-    'EBAY', 'ECL', 'ED', 'EFX', 'EIX', 'EL', 'ELV', 'EMN', 'EMR', 'ENPH',
-    'EOG', 'EPAM', 'EQIX', 'EQR', 'ES', 'ESS', 'ETN', 'ETR', 'ETSY', 'EVRG',
-    'EW', 'EXC', 'EXPD', 'EXPE', 'EXR', 'F', 'FANG', 'FAST', 'FBHS', 'FCX',
-    'FDS', 'FDX', 'FE', 'FFIV', 'FIS', 'FISV', 'FITB', 'FLT', 'FMC', 'FOX',
-    'FOXA', 'FRC', 'FRT', 'FTNT', 'FTV', 'GD', 'GE', 'GILD', 'GIS', 'GL',
-    'GLW', 'GM', 'GNRC', 'GOOG', 'GOOGL', 'GPC', 'GPN', 'GRMN', 'GS', 'GWW',
-    'HAL', 'HAS', 'HBAN', 'HCA', 'HD', 'HES', 'HIG', 'HII', 'HLT', 'HOLX',
-    'HON', 'HPE', 'HPQ', 'HRL', 'HSIC', 'HST', 'HSY', 'HUM', 'HWM', 'IBM',
-    'ICE', 'IDXX', 'IEX', 'IFF', 'ILMN', 'INCY', 'INTC', 'INTU', 'INVH', 'IP',
-    'IPG', 'IQV', 'IR', 'IRM', 'ISRG', 'IT', 'ITW', 'IVZ', 'J', 'JBHT', 'JCI',
-    'JKHY', 'JNJ', 'JNPR', 'JPM', 'K', 'KDP', 'KEY', 'KEYS', 'KHC', 'KIM',
-    'KLAC', 'KMB', 'KMI', 'KMX', 'KO', 'KR', 'L', 'LDOS', 'LEN', 'LH', 'LHX',
-    'LIN', 'LKQ', 'LLY', 'LMT', 'LNC', 'LNT', 'LOW', 'LRCX', 'LUMN', 'LUV',
-    'LVS', 'LW', 'LYB', 'LYV', 'MA', 'MAA', 'MAR', 'MAS', 'MCD', 'MCHP', 'MCK',
-    'MCO', 'MDLZ', 'MDT', 'MET', 'META', 'MGM', 'MHK', 'MKC', 'MKTX', 'MLM',
-    'MMC', 'MMM', 'MNST', 'MO', 'MOH', 'MOS', 'MPC', 'MPWR', 'MRK', 'MRNA',
-    'MRO', 'MS', 'MSCI', 'MSFT', 'MSI', 'MTB', 'MTCH', 'MTD', 'MU', 'NCLH',
-    'NDAQ', 'NDSN', 'NEE', 'NEM', 'NFLX', 'NI', 'NKE', 'NLOK', 'NLSN', 'NOC',
-    'NOW', 'NRG', 'NSC', 'NTAP', 'NTRS', 'NUE', 'NVDA', 'NVR', 'NWL', 'NWS',
-    'NWSA', 'NXPI', 'O', 'ODFL', 'OGN', 'OKE', 'OMC', 'ON', 'ORCL', 'ORLY',
-    'OTIS', 'OXY', 'PARA', 'PAYC', 'PAYX', 'PCAR', 'PEAK', 'PEG', 'PEP', 'PFE',
-    'PFG', 'PG', 'PGR', 'PH', 'PHM', 'PKG', 'PKI', 'PLD', 'PM', 'PNC', 'PNR',
-    'PNW', 'POOL', 'PPG', 'PPL', 'PRU', 'PSA', 'PSX', 'PTC', 'PWR', 'PXD',
-    'PYPL', 'QCOM', 'QRVO', 'RCL', 'RE', 'REG', 'REGN', 'RF', 'RHI', 'RJF',
-    'RL', 'RMD', 'ROK', 'ROL', 'ROP', 'ROST', 'RSG', 'RTX', 'SBAC', 'SBNY',
-    'SBUX', 'SCHW', 'SEDG', 'SEE', 'SHW', 'SIVB', 'SJM', 'SLB', 'SNA', 'SNPS',
-    'SO', 'SPG', 'SPGI', 'SRE', 'STE', 'STT', 'STX', 'STZ', 'SWK', 'SWKS',
+# also check: https://github.com/deltaray-io/US-Stock-Symbols
+SP500: tuple[str, ...] = (
+    'A', 'AAL', 'AAPL', 'ABBV', 'ABNB', 'ABT', 'ACGL', 'ACN', 'ADBE', 'ADI',
+    'ADM', 'ADP', 'ADSK', 'AEE', 'AEP', 'AES', 'AFL', 'AIG', 'AIZ', 'AJG',
+    'AKAM', 'ALB', 'ALGN', 'ALL', 'ALLE', 'AMAT', 'AMCR', 'AMD', 'AME', 'AMGN',
+    'AMP', 'AMT', 'AMZN', 'ANET', 'ANSS', 'AON', 'AOS', 'APA', 'APD', 'APH',
+    'APTV', 'ARE', 'ATO', 'AVB', 'AVGO', 'AVY', 'AWK', 'AXON', 'AXP', 'AZO',
+    'BA', 'BAC', 'BALL', 'BAX', 'BBWI', 'BBY', 'BDX', 'BEN', 'BF.B', 'BG',
+    'BIIB', 'BIO', 'BK', 'BKNG', 'BKR', 'BLDR', 'BLK', 'BMY', 'BR', 'BRK.B',
+    'BRO', 'BSX', 'BWA', 'BX', 'BXP', 'C', 'CAG', 'CAH', 'CARR', 'CAT', 'CB',
+    'CBOE', 'CBRE', 'CCI', 'CCL', 'CDAY', 'CDNS', 'CDW', 'CE', 'CEG', 'CF',
+    'CFG', 'CHD', 'CHRW', 'CHTR', 'CI', 'CINF', 'CL', 'CLX', 'CMA', 'CMCSA',
+    'CME', 'CMG', 'CMI', 'CMS', 'CNC', 'CNP', 'COF', 'COO', 'COP', 'COR',
+    'COST', 'CPB', 'CPRT', 'CPT', 'CRL', 'CRM', 'CSCO', 'CSGP', 'CSX', 'CTAS',
+    'CTLT', 'CTRA', 'CTSH', 'CTVA', 'CVS', 'CVX', 'CZR', 'D', 'DAL', 'DD',
+    'DE', 'DFS', 'DG', 'DGX', 'DHI', 'DHR', 'DIS', 'DLR', 'DLTR', 'DOV', 'DOW',
+    'DPZ', 'DRI', 'DTE', 'DUK', 'DVA', 'DVN', 'DXCM', 'EA', 'EBAY', 'ECL',
+    'ED', 'EFX', 'EG', 'EIX', 'EL', 'ELV', 'EMN', 'EMR', 'ENPH', 'EOG', 'EPAM',
+    'EQIX', 'EQR', 'EQT', 'ES', 'ESS', 'ETN', 'ETR', 'ETSY', 'EVRG', 'EW',
+    'EXC', 'EXPD', 'EXPE', 'EXR', 'F', 'FANG', 'FAST', 'FCX', 'FDS', 'FDX',
+    'FE', 'FFIV', 'FI', 'FICO', 'FIS', 'FITB', 'FLT', 'FMC', 'FOX', 'FOXA',
+    'FRT', 'FSLR', 'FTNT', 'FTV', 'GD', 'GE', 'GEHC', 'GEN', 'GILD', 'GIS',
+    'GL', 'GLW', 'GM', 'GNRC', 'GOOG', 'GOOGL', 'GPC', 'GPN', 'GRMN', 'GS',
+    'GWW', 'HAL', 'HAS', 'HBAN', 'HCA', 'HD', 'HES', 'HIG', 'HII', 'HLT',
+    'HOLX', 'HON', 'HPE', 'HPQ', 'HRL', 'HSIC', 'HST', 'HSY', 'HUBB', 'HUM',
+    'HWM', 'IBM', 'ICE', 'IDXX', 'IEX', 'IFF', 'ILMN', 'INCY', 'INTC', 'INTU',
+    'INVH', 'IP', 'IPG', 'IQV', 'IR', 'IRM', 'ISRG', 'IT', 'ITW', 'IVZ', 'J',
+    'JBHT', 'JBL', 'JCI', 'JKHY', 'JNJ', 'JNPR', 'JPM', 'K', 'KDP', 'KEY',
+    'KEYS', 'KHC', 'KIM', 'KLAC', 'KMB', 'KMI', 'KMX', 'KO', 'KR', 'KVUE', 'L',
+    'LDOS', 'LEN', 'LH', 'LHX', 'LIN', 'LKQ', 'LLY', 'LMT', 'LNT', 'LOW',
+    'LRCX', 'LULU', 'LUV', 'LVS', 'LW', 'LYB', 'LYV', 'MA', 'MAA', 'MAR',
+    'MAS', 'MCD', 'MCHP', 'MCK', 'MCO', 'MDLZ', 'MDT', 'MET', 'META', 'MGM',
+    'MHK', 'MKC', 'MKTX', 'MLM', 'MMC', 'MMM', 'MNST', 'MO', 'MOH', 'MOS',
+    'MPC', 'MPWR', 'MRK', 'MRNA', 'MRO', 'MS', 'MSCI', 'MSFT', 'MSI', 'MTB',
+    'MTCH', 'MTD', 'MU', 'NCLH', 'NDAQ', 'NDSN', 'NEE', 'NEM', 'NFLX', 'NI',
+    'NKE', 'NOC', 'NOW', 'NRG', 'NSC', 'NTAP', 'NTRS', 'NUE', 'NVDA', 'NVR',
+    'NWS', 'NWSA', 'NXPI', 'O', 'ODFL', 'OKE', 'OMC', 'ON', 'ORCL', 'ORLY',
+    'OTIS', 'OXY', 'PANW', 'PARA', 'PAYC', 'PAYX', 'PCAR', 'PCG', 'PEAK',
+    'PEG', 'PEP', 'PFE', 'PFG', 'PG', 'PGR', 'PH', 'PHM', 'PKG', 'PLD', 'PM',
+    'PNC', 'PNR', 'PNW', 'PODD', 'POOL', 'PPG', 'PPL', 'PRU', 'PSA', 'PSX',
+    'PTC', 'PWR', 'PXD', 'PYPL', 'QCOM', 'QRVO', 'RCL', 'REG', 'REGN', 'RF',
+    'RHI', 'RJF', 'RL', 'RMD', 'ROK', 'ROL', 'ROP', 'ROST', 'RSG', 'RTX',
+    'RVTY', 'SBAC', 'SBUX', 'SCHW', 'SHW', 'SJM', 'SLB', 'SNA', 'SNPS', 'SO',
+    'SPG', 'SPGI', 'SRE', 'STE', 'STLD', 'STT', 'STX', 'STZ', 'SWK', 'SWKS',
     'SYF', 'SYK', 'SYY', 'T', 'TAP', 'TDG', 'TDY', 'TECH', 'TEL', 'TER', 'TFC',
-    'TFX', 'TGT', 'TJX', 'TMO', 'TMUS', 'TPR', 'TRMB', 'TROW', 'TRV', 'TSCO',
-    'TSLA', 'TSN', 'TT', 'TTWO', 'TWTR', 'TXN', 'TXT', 'TYL', 'UAL', 'UDR',
-    'UHS', 'ULTA', 'UNH', 'UNP', 'UPS', 'URI', 'USB', 'V', 'VFC', 'VICI',
-    'VLO', 'VMC', 'VNO', 'VRSK', 'VRSN', 'VRTX', 'VTR', 'VTRS', 'VZ', 'WAB',
-    'WAT', 'WBA', 'WBD', 'WDC', 'WEC', 'WELL', 'WFC', 'WHR', 'WM', 'WMB',
-    'WMT', 'WRB', 'WRK', 'WST', 'WTW', 'WY', 'WYNN', 'XEL', 'XOM', 'XRAY',
-    'XYL', 'YUM', 'ZBH', 'ZBRA', 'ZION', 'ZTS')
+    'TFX', 'TGT', 'TJX', 'TMO', 'TMUS', 'TPR', 'TRGP', 'TRMB', 'TROW', 'TRV',
+    'TSCO', 'TSLA', 'TSN', 'TT', 'TTWO', 'TXN', 'TXT', 'TYL', 'UAL', 'UBER',
+    'UDR', 'UHS', 'ULTA', 'UNH', 'UNP', 'UPS', 'URI', 'USB', 'V', 'VFC',
+    'VICI', 'VLO', 'VLTO', 'VMC', 'VRSK', 'VRSN', 'VRTX', 'VTR', 'VTRS', 'VZ',
+    'WAB', 'WAT', 'WBA', 'WBD', 'WDC', 'WEC', 'WELL', 'WFC', 'WHR', 'WM',
+    'WMB', 'WMT', 'WRB', 'WRK', 'WST', 'WTW', 'WY', 'WYNN', 'XEL', 'XOM',
+    'XRAY', 'XYL', 'YUM', 'ZBH', 'ZBRA', 'ZION', 'ZTS')
 
 # old stock symbols who got merged, renamed, removed:
-SP500old = ('FB', 'PVH')
+SP500old: tuple[str, ...] = ('FB', 'PVH')
 
 # https://en.wikipedia.org/wiki/NASDAQ-100
-NASDAQ100 = ('ATVI', 'ADBE', 'ADP', 'ABNB', 'ALGN', 'GOOGL', 'GOOG', 'AMZN', 'AMD',
-    'AEP', 'AMGN', 'ADI', 'ANSS', 'AAPL', 'AMAT', 'ASML', 'AZN', 'TEAM',
-    'ADSK', 'BIDU', 'BIIB', 'BKNG', 'AVGO', 'CDNS', 'CHTR', 'CTAS', 'CSCO',
-    'CTSH', 'CMCSA', 'CEG', 'CPRT', 'COST', 'CRWD', 'CSX', 'DDOG', 'DXCM',
-    'DOCU', 'DLTR', 'EBAY', 'EA', 'EXC', 'FAST', 'FISV', 'FTNT', 'GILD', 'HON',
-    'IDXX', 'ILMN', 'INTC', 'INTU', 'ISRG', 'JD', 'KDP', 'KLAC', 'KHC', 'LRCX',
-    'LCID', 'LULU', 'MAR', 'MRVL', 'MTCH', 'MELI', 'META', 'MCHP', 'MU',
-    'MSFT', 'MRNA', 'MDLZ', 'MNST', 'NTES', 'NFLX', 'NVDA', 'NXPI', 'ORLY',
-    'OKTA', 'ODFL', 'PCAR', 'PANW', 'PAYX', 'PYPL', 'PEP', 'PDD', 'QCOM',
-    'REGN', 'ROST', 'SGEN', 'SIRI', 'SWKS', 'SPLK', 'SBUX', 'SNPS', 'TMUS',
-    'TSLA', 'TXN', 'VRSN', 'VRSK', 'VRTX', 'WBA', 'WDAY', 'XEL', 'ZM', 'ZS')
+NASDAQ100: tuple[str, ...] = (
+    'ADBE', 'ADP', 'ABNB', 'GOOGL', 'GOOG', 'AMZN', 'AMD', 'AEP', 'AMGN',
+    'ADI', 'ANSS', 'AAPL', 'AMAT', 'ASML', 'AZN', 'TEAM', 'ADSK', 'BKR',
+    'BIIB', 'BKNG', 'AVGO', 'CDNS', 'CDW', 'CHTR', 'CTAS', 'CSCO', 'CCEP',
+    'CTSH', 'CMCSA', 'CEG', 'CPRT', 'CSGP', 'COST', 'CRWD', 'CSX', 'DDOG',
+    'DXCM', 'FANG', 'DLTR', 'DASH', 'EA', 'EXC', 'FAST', 'FTNT', 'GEHC',
+    'GILD', 'GFS', 'HON', 'IDXX', 'ILMN', 'INTC', 'INTU', 'ISRG', 'KDP',
+    'KLAC', 'KHC', 'LRCX', 'LULU', 'MAR', 'MRVL', 'MELI', 'META', 'MCHP', 'MU',
+    'MSFT', 'MRNA', 'MDLZ', 'MDB', 'MNST', 'NFLX', 'NVDA', 'NXPI', 'ORLY',
+    'ODFL', 'ON', 'PCAR', 'PANW', 'PAYX', 'PYPL', 'PDD', 'PEP', 'QCOM', 'REGN',
+    'ROP', 'ROST', 'SIRI', 'SPLK', 'SBUX', 'SNPS', 'TTWO', 'TMUS', 'TSLA',
+    'TXN', 'TTD', 'VRSK', 'VRTX', 'WBA', 'WBD', 'WDAY', 'XEL', 'ZS')
 
-REITS = ('ARE', 'AMT', 'AVB', 'BXP', 'CPT', 'CBRE', 'CCI', 'DLR', 'DRE', 'EQUIX',
-    'EQR', 'ESS', 'EXR', 'FRT', 'PEAK', 'HST', 'IRM', 'KIM', 'MAA', 'PLD',
-    'PSA', 'O', 'REG', 'SBAC', 'SPG', 'UDR', 'VTR', 'VICI', 'VNO', 'WELL', 'WY')
+REITS: tuple[str, ...] = ('ARE', 'AMT', 'AVB', 'BXP', 'CPT', 'CBRE', 'CCI',
+    'DLR', 'DRE', 'EQUIX', 'EQR', 'ESS', 'EXR', 'FRT', 'PEAK', 'HST', 'INVH',
+    'IRM', 'KIM', 'MAA', 'PLD', 'PSA', 'O', 'REG', 'SBAC', 'SPG', 'UDR',
+    'VTR', 'VICI', 'VNO', 'WELL', 'WY')
 
 # Read all companies of the SP500 from wikipedia.
-def read_sp500():
+def read_sp500() -> pandas.DataFrame:
     table = pandas.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
     df = table[0]
-    df.drop('SEC filings', axis=1, inplace=True)
+    #print(df.info())
+    #df.drop('SEC filings', axis=1, inplace=True)
     return df
 
-def print_sp500():
+def print_sp500() -> None:
     import pprint
     df = read_sp500()
     #df['Symbol'] = df['Symbol'].str.replace('.', '/')
@@ -267,12 +282,12 @@ def print_sp500():
     print(p)
     # XXX print REITS: df['GICS Sector'] == 'Real Estate'
 
-def read_nasdaq100():
+def read_nasdaq100() -> pandas.DataFrame:
     table = pandas.read_html('https://en.wikipedia.org/wiki/NASDAQ-100')
     df = table[4]
     return df
 
-def print_nasdaq100():
+def print_nasdaq100() -> None:
     import pprint
     df = read_nasdaq100()
     #df['Ticker'] = df['Ticker'].str.replace('.', '/')
@@ -287,21 +302,18 @@ def is_stock(symbol, tsubcode):
     # Crypto assets like BTC/USD or ETH/USD:
     if symbol[-4:] == '/USD':
         return AssetType.Crypto
-    #if symbol in ('SPY','IWM','QQQ'):
-    #    return AssetType.AktienFond
     # Well known ETFs:
-    if symbol in ('DIA','DXJ','EEM','EFA','EFA','EWW','EWZ','FEZ','FXB','FXE','FXI',
+    if symbol in ('DIA','DXJ','EEM','EFA','EFA','EQQQ','EWW','EWZ','FEZ','FXB','FXE','FXI',
         'GDX','GDXJ','IWM','IYR','KRE','OIH','QQQ','TQQQ',
         'RSX','SMH','SPY','NOBL','UNG','XBI','XHB','XLB',
         'XLE','XLF','XLI','XLK','XLP','XLU','XLV','XME','XOP','XRT','XLRE'):
-        return AssetType.OtherStock # AktienFond
-    # Just an example, unfortunately EQQQ cannot be traded with Tastyworks:
-    if symbol in ('EQQQ',):
         return AssetType.AktienFond
     if symbol in ('TLT','HYG','IEF','GLD','SLV','VXX','UNG','USO'):
         return AssetType.OtherStock
+    if symbol in REITS:
+        return AssetType.ImmobilienFond
     # Well known individual stock names:
-    if (symbol in SP500 or symbol in SP500old or symbol in NASDAQ100) and symbol not in REITS:
+    if (symbol in SP500 or symbol in SP500old or symbol in NASDAQ100): # and symbol not in REITS:
         return AssetType.IndStock
     if symbol.startswith('/'):
         if tsubcode not in ('Buy', 'Sell', 'Futures Settlement'):
@@ -309,7 +321,7 @@ def is_stock(symbol, tsubcode):
         return AssetType.Future
     # The conservative way is to throw an exception if we are not sure.
     if not assume_stock:
-        raise ValueError(f'No idea if this is a stock: {symbol}' +
+        raise ValueError(f'No idea if this is a stock: {symbol}\n' +
             'Use the option --assume-individual-stock to assume individual stock ' +
             'for all unknown symbols.')
     # Just assume this is a normal stock if not in the above list
@@ -321,7 +333,7 @@ def sign(x):
     return -1
 
 # return date of one year earlier:
-def prev_year(date):
+def prev_year(date: str):
     if date is None:
         return None
     return str(int(date[:4]) - 1) + date[4:]
@@ -414,7 +426,7 @@ def fifos_split(fifos, asset, ratio):
 
 # account-usd should always be the same as total together with
 # EURUSD conversion data. So just a sanity check:
-def check_total(fifos, total):
+def check_total(fifos, total: float) -> None:
     #for (price, price_usd, quantity, date, tax_free) in fifos['account-usd']:
     for (_, _, quantity, _, _) in fifos['account-usd']:
         total -= quantity / 10000
@@ -425,7 +437,7 @@ def check_total(fifos, total):
 # Graphical output of some summary data:
 # How to change date-format output with pandas:
 # https://stackoverflow.com/questions/30133280/pandas-bar-plot-changes-date-format
-def show_plt(df):
+def show_plt(df: pandas.DataFrame) -> None:
     import matplotlib.pyplot as plt
 
     df2 = df.copy()
@@ -434,7 +446,7 @@ def show_plt(df):
     df2['Datum/Zeit'] = pandas.to_datetime(df2['Datum/Zeit'])
     df2.set_index('Datum/Zeit', inplace=True)
 
-    monthly_totals = df2.resample('MS').sum()
+    monthly_totals = df2.resample('MS').sum(numeric_only=True)
     monthly_last = df2.resample('MS').last() # .ohlc() .mean()
     monthly_min = monthly_last['Net-Total'].min() * 0.9
     date_monthly = [x.strftime('%Y-%m') for x in monthly_totals.index]
@@ -452,7 +464,7 @@ def show_plt(df):
     ax.set_xticklabels(date_monthly)
     plt.ylim(bottom=monthly_min)
 
-    quarterly_totals = df2.resample('QS').sum()
+    quarterly_totals = df2.resample('QS').sum(numeric_only=True)
     quarterly_last = df2.resample('QS').last() # .ohlc() .mean()
     quarterly_min = quarterly_last['Net-Total'].min() * 0.9
     date_quarterly = [x.strftime('%Y-%m') for x in quarterly_totals.index]
@@ -475,13 +487,13 @@ def show_plt(df):
     plt.show()
 
 # Append "row" into pandas DataFrame "df".
-def df_append_row(df, row):
-    #df = df.append(pandas.Series(row), ignore_index=True)
-    df.loc[len(df)] = row
-    #df = df.sort_index().reset_index(drop=True)
-    return df
+#def df_append_row(df, row) -> pandas.DataFrame:
+#    #df = df.append(pandas.Series(row), ignore_index=True)
+#    df.loc[len(df)] = row
+#    #df = df.sort_index().reset_index(drop=True)
+#    return df
 
-# Take all transactions and create summaries for differnet
+# Take all transactions and create summaries for different
 # trading classes.
 def get_summary(new_wk, tax_output, min_year, max_year):
     # generate new (empty) pandas dataframe:
@@ -489,13 +501,18 @@ def get_summary(new_wk, tax_output, min_year, max_year):
         min_year = max_year = int(tax_output)
     years = list(range(min_year, max_year + 1))
     years_total = years + ['total']
-    index = ('Einzahlungen', 'Auszahlungen', 'Brokergebühren',
-        'Alle Gebühren in USD', 'Alle Gebühren in Euro',
+    first_transaction_date = new_wk.iloc[0][0][:10]
+    last_transaction_date = new_wk.iloc[len(new_wk) - 1][0][:10]
+    years_of_data = (pydatetime.date.fromisoformat(last_transaction_date) - \
+        pydatetime.date.fromisoformat(first_transaction_date)).days / 365.2425
+    index = ('Einzahlungen', 'Einzahlungen USD', 'Auszahlungen', 'Auszahlungen USD',
+        'Brokergebühren', 'Alle Gebühren in USD', 'Alle Gebühren in Euro',
         'Währungsgewinne USD', 'Währungsgewinne USD (steuerfrei)',
         'Währungsgewinne USD Gesamt',
         'Krypto-Gewinne', 'Krypto-Verluste',
         'Anlage SO', 'Anlage SO Steuerbetrag', 'Anlage SO Verlustvortrag',
         'Investmentfondsgewinne', 'Investmentfondsverluste',
+        'Dividenden Aktienfond', 'Dividenden Mischfond', 'Dividenden Immobilienfond',
         'Anlage KAP-INV',
         'Aktiengewinne (Z20)', 'Aktienverluste (Z23)', 'Aktien Gesamt',
         'Aktien Steuerbetrag', 'Aktien Verlustvortrag',
@@ -516,27 +533,29 @@ def get_summary(new_wk, tax_output, min_year, max_year):
         'Zinseinnahmen', 'Zinsausgaben', 'Zinsen Gesamt',
         'Z19 Ausländische Kapitalerträge',
         'Z21 Termingeschäftsgewinne+Stillhalter',
-        'Z24 Termingeschäftsverluste',
+        'Z24 Termingeschäftsverluste', 'Termingeschäftsverlustvortrag',
         'KAP+KAP-INV', 'KAP+KAP-INV KErSt+Soli', 'KAP+KAP-INV Verlustvortrag',
-        'Cash Balance USD', 'Net Liquidating Value')
+        'Cash Balance USD', 'Net Liquidating Value', 'Net Liquidating Value EUR',
+        'Time Weighted Return USD', 'Time Weighted Return EUR')
     data = []
     for _ in index:
         data.append([.0] * len(years_total))
     stats = pandas.DataFrame(data, columns=years_total, index=index)
+    now = pydatetime.datetime.now()
+    curyear = now.year
+    curdaysperyear = (now - pydatetime.datetime(curyear, 1, 1)).days * 5 // 7
     # check all transactions and record summary data per year:
     for i in new_wk.index:
-        fees = .0
-        cash_total = .0
-        net_total = .0
         if tax_output:
-            (date, type, pnl, eur_amount, _, _, _, _, callput,
-                tax_free, usd_gains, usd_gains_notax) = new_wk.iloc[i]
-        else:
-            (date, type, pnl, eur_amount, _, fees, _, _, _, _, callput,
+            (date, type, pnl, eur_amount, usd_amount, fees, _, _, _, callput,
                 tax_free, usd_gains, usd_gains_notax, _, cash_total, net_total) = new_wk.iloc[i]
+        else:
+            (date, type, pnl, eur_amount, usd_amount, fees, _, _, _, _, callput,
+                tax_free, usd_gains, usd_gains_notax, _, _, cash_total, net_total) = new_wk.iloc[i]
         year = int(date[:4])
         # steuerfreie Zahlungen:
-        if type in ('Brokergebühr', 'Ordergebühr', 'Zinsen', 'Dividende', 'Quellensteuer'):
+        if type in ('Brokergebühr', 'Ordergebühr', 'Zinsen', 'Dividende', 'Dividende Aktienfond',
+            'Dividende Mischfond', 'Dividende Immobilienfond', 'Quellensteuer'):
             if not bool(tax_free):
                 raise ValueError(f'tax_free is False for type "{type}". Full row: "{new_wk.iloc[i]}"')
         # keine steuerfreien Zahlungen:
@@ -547,6 +566,10 @@ def get_summary(new_wk, tax_output, min_year, max_year):
         # Cash und Net Total am Ende vom Jahr feststellen. Letzte Info ist Jahresende:
         stats.loc['Cash Balance USD', year] = float(cash_total)
         stats.loc['Net Liquidating Value', year] = float(net_total)
+        if year == curyear:
+            stats.loc['Net Liquidating Value EUR', year] = usd2eur(float(net_total), last_transaction_date)
+        else:
+            stats.loc['Net Liquidating Value EUR', year] = usd2eur(float(net_total), str(year) + '-12-31')
         # Währungsgewinne:
         stats.loc['Währungsgewinne USD', year] += float(usd_gains)
         stats.loc['Währungsgewinne USD (steuerfrei)', year] += float(usd_gains_notax)
@@ -562,8 +585,10 @@ def get_summary(new_wk, tax_output, min_year, max_year):
         if type == 'Ein/Auszahlung':
             if float(eur_amount) < .0:
                 stats.loc['Auszahlungen', year] += float(eur_amount)
+                stats.loc['Auszahlungen USD', year] += float(usd_amount)
             else:
                 stats.loc['Einzahlungen', year] += float(eur_amount)
+                stats.loc['Einzahlungen USD', year] += float(usd_amount)
         elif type == 'Brokergebühr':
             stats.loc['Brokergebühren', year] += pnl
         elif type in ('Aktienfond', 'Mischfond', 'Immobilienfond'):
@@ -625,6 +650,21 @@ def get_summary(new_wk, tax_output, min_year, max_year):
                 stats.loc['bezahlte Dividenden', year] += pnl
             else:
                 stats.loc['Dividenden', year] += pnl
+        elif type == 'Dividende Aktienfond':
+            if pnl < .0:
+                stats.loc['bezahlte Dividenden', year] += pnl
+            else:
+                stats.loc['Dividenden Aktienfond', year] += pnl
+        elif type == 'Dividende Mischfond':
+            if pnl < .0:
+                stats.loc['bezahlte Dividenden', year] += pnl
+            else:
+                stats.loc['Dividenden Mischfond', year] += pnl
+        elif type == 'Dividende Immobilienfond':
+            if pnl < .0:
+                stats.loc['bezahlte Dividenden', year] += pnl
+            else:
+                stats.loc['Dividenden Immobilienfond', year] += pnl
         elif type == 'Quellensteuer':
             stats.loc['Quellensteuer (Z41)', year] += pnl
         elif type == 'Zinsen':
@@ -658,7 +698,11 @@ def get_summary(new_wk, tax_output, min_year, max_year):
             stats.loc['Sonstige Gewinne', year] + stats.loc['Sonstige Verluste', year]
         stats.loc['Stillhalter Gesamt', year] = \
             stats.loc['Stillhalter-Gewinne', year] + stats.loc['Stillhalter-Verluste', year]
-        stats.loc['Durchschnitt behaltene Prämien pro Tag', year] = stats.loc['Stillhalter Gesamt', year] / 250
+        # One year has on average 252 trading days. Often also 256=16*16 is used within formulas.
+        daysperyear = 250
+        if curyear == year and curdaysperyear < 250:
+            daysperyear = curdaysperyear
+        stats.loc['Durchschnitt behaltene Prämien pro Tag', year] = stats.loc['Stillhalter Gesamt', year] / daysperyear
         stats.loc['Stillhalter Calls Gesamt (FIFO)', year] = \
             stats.loc['Stillhalter-Gewinne Calls (FIFO)', year] + stats.loc['Stillhalter-Verluste Calls (FIFO)', year]
         stats.loc['Stillhalter Puts Gesamt (FIFO)', year] = \
@@ -680,12 +724,18 @@ def get_summary(new_wk, tax_output, min_year, max_year):
         anlage_so_verlust = .0
         if anlage_so < .0:
             anlage_so_verlust = anlage_so
-        if anlage_so < 600.0:
+        so_freigrenze = 600.0
+        if year >= 2024:
+            so_freigrenze = 1000.0
+        if anlage_so < so_freigrenze:
             anlage_so = .0
         stats.loc['Anlage SO Steuerbetrag', year] = anlage_so
         stats.loc['Anlage SO Verlustvortrag', year] = anlage_so_verlust
         stats.loc['Anlage KAP-INV', year] = \
-            stats.loc['Investmentfondsgewinne', year] + stats.loc['Investmentfondsverluste', year]
+            stats.loc['Investmentfondsgewinne', year] + stats.loc['Investmentfondsverluste', year] + \
+            stats.loc['Dividenden Aktienfond', year] + \
+            stats.loc['Dividenden Mischfond', year] + \
+            stats.loc['Dividenden Immobilienfond', year]
         z21 = \
             stats.loc['Long-Optionen-Gewinne', year] + stats.loc['Future-Gewinne', year] + \
             stats.loc['Stillhalter Gesamt', year]
@@ -699,14 +749,22 @@ def get_summary(new_wk, tax_output, min_year, max_year):
             stats.loc['Dividenden', year] + \
             stats.loc['Zinsen Gesamt', year] + \
             stats.loc['zusätzliche Ordergebühren', year]
+        terminverlust = .0
         if year >= 2021:
             stats.loc['Z21 Termingeschäftsgewinne+Stillhalter', year] = z21
             stats.loc['Z24 Termingeschäftsverluste', year] = z24
+            terminverlust = z24
+            if year > min_year and year > 2021:
+                terminverlust += stats.loc['Termingeschäftsverlustvortrag', year - 1]
+            if terminverlust < -20000.0:
+                stats.loc['Termingeschäftsverlustvortrag', year] = terminverlust + 20000.0
+                terminverlust = -20000.0
         else:
             stats.loc['Z19 Ausländische Kapitalerträge', year] += z24
         stats.loc['KAP+KAP-INV', year] = \
             stats.loc['Z19 Ausländische Kapitalerträge', year] + \
-            stats.loc['Anlage KAP-INV', year]
+            stats.loc['Anlage KAP-INV', year] + \
+            terminverlust
         kerstsoli = stats.loc['KAP+KAP-INV', year] * 0.26375
         if year > min_year:
             kerstsoli += stats.loc['KAP+KAP-INV Verlustvortrag', year - 1]
@@ -716,6 +774,20 @@ def get_summary(new_wk, tax_output, min_year, max_year):
             kerstsoli = .0
         stats.loc['KAP+KAP-INV KErSt+Soli', year] = kerstsoli
         stats.loc['KAP+KAP-INV Verlustvortrag', year] = verlustvortrag
+        start_value = stats.loc['Einzahlungen USD', year] + stats.loc['Auszahlungen USD', year]
+        if year > min_year:
+            # XXX This does not work if output is only done for one tax year:
+            start_value += stats.loc['Net Liquidating Value', year - 1]
+        stats.loc['Time Weighted Return USD', year] = .0
+        if start_value != .0:
+            stats.loc['Time Weighted Return USD', year] = (stats.loc['Net Liquidating Value', year] - start_value) * 100 / start_value
+        start_value = stats.loc['Einzahlungen', year] + stats.loc['Auszahlungen', year]
+        if year > min_year:
+            # XXX This does not work if output is only done for one tax year:
+            start_value += stats.loc['Net Liquidating Value EUR', year - 1]
+        stats.loc['Time Weighted Return EUR', year] = .0
+        if start_value != .0:
+            stats.loc['Time Weighted Return EUR', year] = (stats.loc['Net Liquidating Value EUR', year] - start_value) * 100 / start_value
     # limit to two decimal digits
     for i in stats.index:
         for year in years:
@@ -726,28 +798,55 @@ def get_summary(new_wk, tax_output, min_year, max_year):
         for year in years:
             total += stats.loc[i, year]
         stats.loc[i, 'total'] = float(f'{total:.2f}')
+    if not tax_output:
+        # Very rough calculation of time weighted return. Even better would be
+        # to add all yearly calculations: (1 + yearly) * ...
+        start_value = stats.loc['Einzahlungen USD', 'total'] + stats.loc['Auszahlungen USD', 'total']
+        total_return = .0
+        if start_value != .0:
+            total_return = (stats.loc['Net Liquidating Value', max_year] - start_value) / start_value
+        #print("total_return:", total_return, "years_of_data:", years_of_data)
+        annualized_return = (((1 + total_return)**(1 / years_of_data)) - 1) * 100.0
+        stats.loc['Time Weighted Return USD', 'total'] = float(f'{annualized_return:.2f}')
+        start_value = stats.loc['Einzahlungen', 'total'] + stats.loc['Auszahlungen', 'total']
+        total_return = .0
+        if start_value != .0:
+            total_return = (stats.loc['Net Liquidating Value EUR', max_year] - start_value) / start_value
+        #print("2 total_return:", total_return, "years_of_data:", years_of_data)
+        annualized_return = (((1 + total_return)**(1 / years_of_data)) - 1) * 100.0
+        stats.loc['Time Weighted Return EUR', 'total'] = float(f'{annualized_return:.2f}')
     # XXX Compute unrealized sums of short options.
     return stats
 
-def append_yearly_stats(df, tax_output, stats, min_year, max_year):
-    end = [''] * 5
+def prepend_yearly_stats(df: pandas.DataFrame, tax_output, stats, min_year, max_year) -> pandas.DataFrame:
+    out = []
+    end = [''] * 6
     years = list(range(min_year, max_year + 1))
     if tax_output:
         end = []
         years = [int(tax_output)]
     for year in years:
-        df = df_append_row(df, ['', '', '', '', '', '', '', '', '', '', '', ''] + end)
-        df = df_append_row(df, ['', '', '', '', '', '', '', '', '', '', '', ''] + end)
-        df = df_append_row(df, [f'Tastyworks {year} Kapitalflussrechnung', '', '', '', '', '', '', '', '', '', '', ''] + end)
-        df = df_append_row(df, ['', '', '', '', '', '', '', '', '', '', '', ''] + end)
+        out.append(['', '', '', '', '', '', '', '', '', '', '', ''] + end)
+        out.append(['', '', '', '', '', '', '', '', '', '', '', ''] + end)
+        out.append([f'Tastyworks Kapitalflussrechnung {year}', '', '', '', '', '', '', '', '', '', '', ''] + end)
+        out.append(['', '', '', '', '', '', '', '', '', '', '', ''] + end)
         for i in stats.index:
             # XXX enable these again if data is complete also for yearly stats:
-            if tax_output and i in ('Cash Balance USD', 'Net Liquidating Value', 'Alle Gebühren in USD', 'Alle Gebühren in Euro'):
+            if tax_output and i in ('Time Weighted Return EUR', 'Time Weighted Return USD'):
                 continue
-            if i in ('Alle Gebühren in USD', 'Cash Balance USD', 'Net Liquidating Value'):
-                df = df_append_row(df, [i, '', '', '', '', '', stats.loc[i, year], 'USD', '', '', '', ''] + end)
-            else:
-                df = df_append_row(df, [i, '', '', '', '', '', stats.loc[i, year], 'Euro', '', '', '', ''] + end)
+            unit = 'Euro'
+            if i in ('Alle Gebühren in USD', 'Cash Balance USD', 'Net Liquidating Value',
+                'Einzahlungen USD', 'Auszahlungen USD'):
+                unit = 'USD'
+            if i in ('Time Weighted Return EUR', 'Time Weighted Return USD'):
+                unit = '%'
+            out.append([i, '', '', '', '', '', f'{stats.loc[i, year]:.2f}', unit, '', '', '', ''] + end)
+    out.append(['', '', '', '', '', '', '', '', '', '', '', ''] + end)
+    out.append(['', '', '', '', '', '', '', '', '', '', '', ''] + end)
+    out.append(df.columns)
+    #df = pandas.DataFrame(out, columns=df.columns).append(df)
+    dfnew = pandas.DataFrame(out, columns=df.columns)
+    df = pandas.concat([dfnew, df], ignore_index=True)
     return df
 
 # XXX hack for future multiples
@@ -770,7 +869,7 @@ mul_dict = {
     '/ZW': 50.0, '/ZS': 50.0, '/ZC': 50.0,
 }
 
-def get_multiplier(asset):
+def get_multiplier(asset: str) -> float:
     if asset[:4] in mul_dict:
         return mul_dict[asset[:4]]
     if asset[:3] in mul_dict:
@@ -830,9 +929,8 @@ def check(all_wk, output_summary, output_csv, output_excel, tax_output, show, ve
         if tsubcode in ('Credit Interest', 'Debit Interest', 'Dividend',
             'Fee', 'Balance Adjustment', 'Special Dividend'):
             tax_free = True
-        if tsubcode == 'Deposit':
-            if description != 'ACH DEPOSIT':
-                tax_free = True
+        if tsubcode == 'Deposit' and description != 'ACH DEPOSIT':
+            tax_free = True
         if tsubcode == 'Withdrawal' and (not isnan(symbol) or description[:5] == 'FROM '):
             tax_free = True
         # Stillhalterpraemien gelten als Zufluss und nicht als Anschaffung
@@ -843,7 +941,7 @@ def check(all_wk, output_summary, output_csv, output_excel, tax_output, show, ve
         # as one transaction, we should split the currency gains transaction as well.
         # Could we detect this bad case within transactions?
         if tcode != 'Money Movement' and \
-            not isnan(expire) and str(buysell) == 'Sell' and str(openclose) == 'Open':
+            not isnan(expire) and buysell == 'Sell' and openclose == 'Open':
             tax_free = True
         # USD as a big integer number:
         if False:
@@ -908,7 +1006,7 @@ def check(all_wk, output_summary, output_csv, output_excel, tax_output, show, ve
                 asset = 'balance adjustment'
                 asset_type = AssetType.OrderPayments
             elif tsubcode == 'Fee':
-                if description == 'INTL WIRE FEE':
+                if description in ('INTL WIRE FEE', 'DOMESTIC WIRE FEE'):
                     local_pnl = ''
                     asset = 'fee'
                     asset_type = AssetType.Fee
@@ -956,9 +1054,9 @@ def check(all_wk, output_summary, output_csv, output_excel, tax_output, show, ve
             # XXX: We might check that the two relevant entries have the same data for 'amount'.
             x = symbol + '-' + date
             # quantity for splits seems to be more like strike price and how it changes.
-            # We use it to calculate the split ration / reverse ratio.
-            if (tsubcode == 'Forward Split' and str(buysell) == 'Sell') or \
-               (tsubcode == 'Reverse Split' and str(buysell) == 'Buy'):
+            # We use it to calculate the split ratio / reverse ratio.
+            if (tsubcode == 'Forward Split' and buysell == 'Sell') or \
+               (tsubcode == 'Reverse Split' and buysell == 'Buy'):
                 splits[x] = quantity
             else:
                 oldquantity = splits[x]
@@ -981,8 +1079,8 @@ def check(all_wk, output_summary, output_csv, output_excel, tax_output, show, ve
                     strike = int(strike)
                 asset = f'{symbol} {callput}{strike} {expire}'
                 asset_type = AssetType.LongOption
-                if not isnan(expire) and ((str(buysell) == 'Sell' and str(openclose) == 'Open') or
-                    (str(buysell) == 'Buy' and str(openclose) == 'Close') or
+                if not isnan(expire) and ((buysell == 'Sell' and openclose == 'Open') or
+                    (buysell == 'Buy' and openclose == 'Close') or
                     (tsubcode in ('Expiration', 'Exercise', 'Assignment', 'Cash Settled Assignment', 'Cash Settled Exercise') and not fifos_islong(fifos, asset))):
                     asset_type = AssetType.ShortOption
             else:
@@ -990,7 +1088,7 @@ def check(all_wk, output_summary, output_csv, output_excel, tax_output, show, ve
             # 'buysell' is not set correctly for 'Expiration'/'Exercise'/'Assignment' entries,
             # so we look into existing positions to check if we are long or short (we cannot
             # be both, so this test should be safe):
-            if str(buysell) == 'Sell' or \
+            if buysell == 'Sell' or \
                 (tsubcode in ('Expiration', 'Exercise', 'Assignment', 'Cash Settled Assignment', 'Cash Settled Exercise') and fifos_islong(fifos, asset)):
                 #print('Switching quantity from long to short:')
                 quantity = - quantity
@@ -1011,17 +1109,31 @@ def check(all_wk, output_summary, output_csv, output_excel, tax_output, show, ve
                 # up until final closing instead. This should be changed. ???
                 local_pnl = eur_amount
             else:
-                if cur_year >= '2018':
-                    if asset_type == AssetType.AktienFond:
-                        local_pnl *= 0.70
-                    elif asset_type == AssetType.MischFond:
-                        local_pnl *= 0.85
-                    elif asset_type == AssetType.ImmobilienFond:
-                        local_pnl *= 0.20
+                pass
+                #if cur_year >= '2018':
+                #    # Teilfreistellungen: https://www.gesetze-im-internet.de/invstg_2018/__20.html
+                #    if asset_type == AssetType.AktienFond:
+                #        local_pnl *= 0.70
+                #    elif asset_type == AssetType.MischFond:
+                #        local_pnl *= 0.85
+                #    elif asset_type == AssetType.ImmobilienFond:
+                #        local_pnl *= 0.20
             description = ''
             local_pnl = f'{local_pnl:.4f}'
 
         #check_total(fifos, cash_total)
+
+        if asset_type == AssetType.Dividend:
+            div_type = is_stock(symbol, 'Buy')
+            if div_type == AssetType.AktienFond:
+                #local_pnl = f'{float(local_pnl)*0.70:.4f}'
+                asset_type = AssetType.DividendAktienFond
+            if div_type == AssetType.MischFond:
+                #local_pnl = f'{float(local_pnl)*0.85:.4f}'
+                asset_type = AssetType.DividendMischFond
+            if div_type == AssetType.ImmobilienFond:
+                #local_pnl = f'{float(local_pnl)*0.20:.4f}'
+                asset_type = AssetType.DividendImmobilienFond
 
         net_total = cash_total + fifos_sum_usd(fifos)
 
@@ -1030,27 +1142,29 @@ def check(all_wk, output_summary, output_csv, output_excel, tax_output, show, ve
         if tax_output:
             if datetime[:4] == tax_output:
                 new_wk.append([datetime[:10], transaction_type(asset_type), local_pnl,
-                        f'{eur_amount:.2f}', f'{amount - fees:.4f}', f'{conv_usd:.4f}',
+                        f'{eur_amount:.2f}', f'{amount - fees:.4f}', f'{fees:.4f}', f'{conv_usd:.4f}',
                         quantity, asset, callput,
-                        tax_free, f'{usd_gains:.2f}', f'{usd_gains_notax:.2f}'])
+                        tax_free, f'{usd_gains:.2f}', f'{usd_gains_notax:.2f}', f'{usd_gains + usd_gains_notax:.2f}',
+                        f'{cash_total:.2f}', f'{net_total:.2f}'])
         else:
             new_wk.append([datetime, transaction_type(asset_type), local_pnl,
                 f'{eur_amount:.2f}', f'{amount:.4f}', f'{fees:.4f}', f'{conv_usd:.4f}',
                 quantity, asset, symbol, callput,
-                tax_free, f'{usd_gains:.2f}', f'{usd_gains_notax:.2f}',
+                tax_free, f'{usd_gains:.2f}', f'{usd_gains_notax:.2f}', f'{usd_gains + usd_gains_notax:.2f}',
                 newdescription, f'{cash_total:.2f}', f'{net_total:.2f}'])
 
     #wk.drop('Account Reference', axis=1, inplace=True)
     if tax_output:
         new_wk = sorted(new_wk, key=lambda x: transaction_order[x[1]])
         new_wk = pandas.DataFrame(new_wk, columns=('Datum', 'Transaktions-Typ', 'GuV',
-            'Euro-Preis', 'USD-Preis', 'EurUSD', 'Anzahl', 'Asset', 'callput',
-            'Steuerneutral', 'USD-Gewinne', 'USD-Gewinne steuerneutral'))
+            'Euro-Preis', 'USD-Preis', 'USD-Gebhren', 'EurUSD', 'Anzahl', 'Asset', 'callput',
+            'Steuerneutral', 'USD-Gewinne', 'USD-Gewinne steuerneutral', 'USD-Gewinne Gesamt',
+            'USDCashTotal', 'Net-Total'))
     else:
         new_wk = pandas.DataFrame(new_wk, columns=('Datum/Zeit', 'Transaktions-Typ', 'GuV',
             'Euro-Preis', 'USD-Preis', 'USD-Gebühren', 'EurUSD', 'Anzahl', 'Asset',
             'Basiswert', 'callput',
-            'Steuerneutral', 'USD-Gewinne', 'USD-Gewinne steuerneutral',
+            'Steuerneutral', 'USD-Gewinne', 'USD-Gewinne steuerneutral', 'USD-Gewinne Gesamt',
             'Beschreibung', 'USD Cash Total', 'Net-Total'))
     stats = get_summary(new_wk, tax_output, min_year, max_year)
     if tax_output:
@@ -1061,7 +1175,11 @@ def check(all_wk, output_summary, output_csv, output_excel, tax_output, show, ve
             stats.to_csv(f)
     if show:
         show_plt(new_wk)
-    new_wk = append_yearly_stats(new_wk, tax_output, stats, min_year, max_year)
+    if tax_output:
+        new_wk.drop('USD-Gebhren', axis=1, inplace=True)
+        new_wk.drop('USDCashTotal', axis=1, inplace=True)
+        new_wk.drop('Net-Total', axis=1, inplace=True)
+    new_wk = prepend_yearly_stats(new_wk, tax_output, stats, min_year, max_year)
     new_wk.drop('callput', axis=1, inplace=True)
     if verbose:
         print(new_wk.to_string())
@@ -1073,22 +1191,51 @@ def check(all_wk, output_summary, output_csv, output_excel, tax_output, show, ve
             new_wk.to_excel(f, index=False, sheet_name='Tastyworks Report') #, engine='xlsxwriter')
 
 # check if the first line of the csv line contains the correct header:
-def check_csv(csv_file):
+def check_csv(csv_file) -> None:
     with open(csv_file, encoding='UTF8') as f:
         content = f.readlines()
     if len(content) < 1 or content[0] != 'Date/Time,Transaction Code,' + \
         'Transaction Subcode,Symbol,Buy/Sell,Open/Close,Quantity,' + \
         'Expiration Date,Strike,Call/Put,Price,Fees,Amount,Description,' + \
         'Account Reference\n':
-        print('ERROR: Wrong first line in csv file.')
+        print('ERROR: Wrong first line in csv file. Please download trade history from the web page.')
         sys.exit(1)
 
-def usage():
-    print('tw-pnl.py [--assume-individual-stock][--tax-output=2021][--usd]' +
+def read_csv_tasty(csv_file: str) -> pandas.DataFrame:
+    check_csv(csv_file)
+    wk = pandas.read_csv(csv_file, parse_dates=['Date/Time'])
+    #print(wk.info())
+    #print(wk.head())
+    #print(wk.memory_usage(deep=True))
+    #print(wk.memory_usage(deep=True).sum(numeric_only=True))
+    #print(wk.dtypes)
+    #(wk
+    # .assign(['Open/Close']=['Open/Close'].fillna('').astype('category')
+    for i in ('Open/Close', 'Buy/Sell', 'Call/Put'):
+        #print(wk[i].value_counts(dropna=False))
+        wk[i] = wk[i].fillna('').astype('category')
+        #print(wk[i].value_counts(dropna=False))
+    for i in ('Account Reference', 'Transaction Subcode', 'Transaction Code'):
+        #print(wk[i].value_counts(dropna=False))
+        wk[i] = wk[i].astype('category')
+        #print(wk[i].value_counts(dropna=False))
+    #for i in ('Symbol', 'Expiration Date', 'Description'):
+        #print(wk[i].value_counts(dropna=False))
+        #wk[i] = wk[i].fillna('').astype('str')
+        #print(wk[i].value_counts(dropna=False))
+    #print(wk.info())
+    #print(wk.head())
+    #print(wk.memory_usage(deep=True))
+    #print(wk.memory_usage(deep=True).sum(numeric_only=True))
+    #print(wk.dtypes)
+    return wk
+
+def usage() -> None:
+    print('tw-pnl.py [--download-eurusd][--assume-individual-stock][--tax-output=2023][--usd]' +
         '[--summary=summary.csv][--output-csv=test.csv][--output-excel=test.xlsx][--help]' +
         '[--verbose][--debug][--show] *.csv')
 
-def main(argv):
+def main(argv) -> None:
     import getopt
     #print_sp500()
     #print_nasdaq100()
@@ -1099,10 +1246,11 @@ def main(argv):
     output_csv = None
     output_excel = None
     tax_output = None
-    #tax_output = '2021'
+    #tax_output = '2023'
     show = False
     try:
         opts, args = getopt.getopt(argv, 'dhuv', ['assume-individual-stock',
+            'download-eurusd',
             'help', 'summary=', 'output-csv=', 'output-excel=',
             'show', 'tax-output=', 'usd', 'verbose', 'debug'])
     except getopt.GetoptError:
@@ -1114,6 +1262,12 @@ def main(argv):
             assume_stock = True
         elif opt in ('-h', '--help'):
             usage()
+            sys.exit()
+        elif opt == '--download-eurusd':
+            filename = 'eurusd.csv'
+            if not os.path.exists(filename):
+                import urllib.request
+                urllib.request.urlretrieve(eurusd_url, filename)
             sys.exit()
         elif opt == '--output-csv':
             output_csv = arg
@@ -1139,8 +1293,7 @@ def main(argv):
     args.reverse()
     all_wk = []
     for csv_file in args:
-        check_csv(csv_file)
-        all_wk.append(pandas.read_csv(csv_file, parse_dates=['Date/Time']))
+        all_wk.append(read_csv_tasty(csv_file))
     check(all_wk, output_summary, output_csv, output_excel, tax_output, show, verbose, debug)
 
 if __name__ == '__main__':
